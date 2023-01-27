@@ -7,7 +7,7 @@ object Assembler {
 
   val prog = Array[Int](
     0x0903, // addi 0x3
-    0x09ff, // -1
+    0x09ff, // addi -1
     0x0d02, // subi 2
     0x21ab, // ldi 0xab
     0x230f, // and 0x0f
@@ -93,7 +93,7 @@ object Assembler {
         case "store" => (ST << 8) + regNumber(tokens(1))
         case "ldaddr" => (LDADDR << 8)
         case "ldind" => (LDIND << 8) + toInt(tokens(1))
-        case "ldindbu" => (LDINDB << 8) + toInt(tokens(1))
+        case "ldindb" => (LDINDB << 8) + toInt(tokens(1))
         case "stind" => (STIND << 8) + toInt(tokens(1))
         case "stindb" => (STINDB << 8) + toInt(tokens(1))
         case "br" => (BR << 8) + brOff
@@ -128,5 +128,4 @@ object Assembler {
      */
     finalProg
   }
-
 }

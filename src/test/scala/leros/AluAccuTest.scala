@@ -4,7 +4,7 @@ import chisel3._
 import chiseltest._
 import org.scalatest.flatspec.AnyFlatSpec
 
-import leros.Types._
+import leros.shared.Constants._
 
 class AluAccuTest extends AnyFlatSpec with ChiselScalatestTester {
   "AluAccu" should "pass" in {
@@ -14,6 +14,7 @@ class AluAccuTest extends AnyFlatSpec with ChiselScalatestTester {
       def alu(a: Int, b: Int, op: Int): Int = {
 
         op match {
+          case 0 => a
           case 1 => a + b
           case 2 => a - b
           case 3 => a & b
@@ -25,7 +26,7 @@ class AluAccuTest extends AnyFlatSpec with ChiselScalatestTester {
         }
       }
       def testOne(a: Int, b: Int, fun: Int): Unit = {
-        dut.io.op.poke(ld)
+        dut.io.op.poke(ld.U)
         dut.io.enaMask.poke("b1111".U)
         dut.io.din.poke((a.toLong & 0x00ffffffffL).U)
         dut.clock.step(1)
@@ -37,7 +38,7 @@ class AluAccuTest extends AnyFlatSpec with ChiselScalatestTester {
 
       def test(values: Seq[Int]) = {
         // for (fun <- add to shr) {
-        for (fun <- 1 to 7) {
+        for (fun <- 0 to 7) {
           for (a <- values) {
             for (b <- values) {
               testOne(a, b, fun)
@@ -47,10 +48,10 @@ class AluAccuTest extends AnyFlatSpec with ChiselScalatestTester {
       }
 
       // Some interesting corner cases
-      val interesting = Array(1, 2, 4, 123, 0, -1, -2, 0x80000000, 0x7fffffff)
+      val interesting = Seq(1, 2, 4, 123, 0, -1, -2, 0x80000000, 0x7fffffff)
       test(interesting)
 
-      val randArgs = Seq.fill(10)(scala.util.Random.nextInt)
+      val randArgs = Seq.fill(10)(scala.util.Random.nextInt())
       test(randArgs)
     }
   }

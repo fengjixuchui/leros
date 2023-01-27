@@ -1,63 +1,132 @@
-/*
- * Leros, a Tiny Microprocessor
- *
- * Author: Martin Schoeberl (martin@jopdesign.com)
- */
-
 package leros
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.ChiselEnum
-
-class Debug extends Bundle {
-  val acc = Output(UInt())
-  val pc = Output(UInt())
-  val instr = Output(UInt())
-  val exit = Output(Bool())
-}
 
 /**
-  * Leros top level as abstract class.
-  * Base class with base state for several different implementations (different pipelines).
-  */
-abstract class Leros(size: Int, memSize: Int, prog: String, fmaxReg: Boolean) extends Module {
-  val io = IO(new Bundle {
-    val dout = Output(UInt(32.W))
-    val dbg = new Debug
-  })
+ * Leros top level.
+ *
+ * Sequential implementation with two states.
+ */
+class Leros(size: Int, memAddrWidth: Int, prog: String, fmaxReg: Boolean) extends LerosBase(size, memAddrWidth, prog, fmaxReg) {
+
+  object State extends ChiselEnum {
+    val fetch, execute = Value
+  }
+  import State._
+
+  val stateReg = RegInit(fetch)
+
+  switch(stateReg) {
+    is(fetch) {
+      stateReg := execute
+    }
+    is(execute) {
+      stateReg := fetch
+    }
+  }
 
   val alu = Module(new AluAccu(size))
 
   val accu = alu.io.accu
 
   // The main architectural state
-  val pcReg = RegInit(0.U(memSize.W))
-  val addrReg = RegInit(0.U(memSize.W))
+  val pcReg = RegInit(0.U(memAddrWidth.W))
+  val addrReg = RegInit(0.U(memAddrWidth.W))
 
   val pcNext = WireDefault(pcReg + 1.U)
 
-  // Instruction memory with an address register that is reset to 0
-  val mem = Module(new InstrMem(memSize, prog))
+  // Fetch from instruction memory with an address register that is reset to 0
+  val mem = Module(new InstrMem(memAddrWidth, prog))
   mem.io.addr := pcNext
   val instr = mem.io.instr
-  // the following should go into Decode
-  // is not used any more in FSMD version
-  val instrSignExt = Wire(SInt(32.W))
-  instrSignExt := instr(7, 0).asSInt
 
-  val instrLowReg = RegNext(instr(7, 0))
+  // Decode
+  val dec = Module(new Decode())
+  dec.io.din := instr
+  val decout = dec.io.dout
 
-  // Data memory
-  // TODO: shall be byte write addressable
-  val dataMem = SyncReadMem(1 << memSize, UInt(32.W))
+  val decReg = RegInit(DecodeOut.default)
+  when (stateReg === fetch) {
+    decReg := decout
+  }
 
-  // printf("accu: %x address register: %x\n", accu, addrReg)
+  val effAddr = (addrReg.asSInt + decout.off).asUInt
+  val effAddrWord = (effAddr >> 2).asUInt
+  val effAddrOff = Wire(UInt(2.W))
+  effAddrOff := effAddr & 0x03.U
+  val vecAccu = Wire(Vec(4, UInt(8.W)))
+  for (i <- 0 until 4) {
+    vecAccu(i) := accu(i*8 + 7, i*8)
+  }
+  // printf("%x %x %x %x\n", effAddr, effAddrWord, effAddrOff, decout.off)
 
+  // Data memory, including the register memory
+  // read in feDec, write in exe
+  val dataMem = Module(new DataMem((memAddrWidth)))
+
+  val memAddr = Mux(decout.isDataAccess, effAddrWord, instr(7, 0))
+  val memAddrReg = RegNext(memAddr)
+  val effAddrOffReg = RegNext(effAddrOff)
+  dataMem.io.rdAddr := memAddr
+  val dataRead = dataMem.io.rdData
+  dataMem.io.wrAddr := memAddrReg
+  dataMem.io.wrData := accu
+  dataMem.io.wr := false.B
+  dataMem.io.wrMask := "b1111".U
+
+  // ALU connection
+  alu.io.op := decReg.op
+  alu.io.enaMask := 0.U
+  alu.io.enaByte := decReg.isLoadIndB
+  alu.io.off := effAddrOffReg
+  // this should be a single signal from decode (what did I mean with this?)
+  alu.io.din := Mux(decReg.useDecOpd, decReg.operand, dataRead)
+
+  // connection to the external world (test)
   val exit = RegInit(false.B)
-
   val outReg = RegInit(0.U(32.W))
   io.dout := outReg
+
+  switch(stateReg) {
+    is (fetch) {
+      // nothing here
+    }
+
+    is (execute) {
+      pcReg := pcNext
+      alu.io.enaMask := decReg.enaMask
+      when (decReg.isLoadAddr) {
+        addrReg := accu
+        alu.io.enaMask := 0.U
+      }
+      when (decReg.isLoadInd) {
+        // nothing to be done here
+      }
+      when(decReg.isLoadIndB) {
+        // nothing to be done here
+        // probably sign extend then
+      }
+      when (decReg.isStore) {
+        dataMem.io.wr := true.B
+        alu.io.enaMask := 0.U
+      }
+      when(decReg.isStoreInd) {
+        dataMem.io.wr := true.B
+        alu.io.enaMask := 0.U
+      }
+      when(decReg.isStoreIndB) {
+        dataMem.io.wr := true.B
+        dataMem.io.wrMask := "b0001".U << effAddrOffReg
+        alu.io.enaMask := 0.U
+        vecAccu(effAddrOffReg) := accu(7, 0)
+        dataMem.io.wrData := vecAccu(3) ## vecAccu(2) ## vecAccu(1) ## vecAccu(0)
+      }
+    }
+
+  }
+
+  exit := RegNext(decReg.exit)
 
   if (fmaxReg) {
     io.dbg.acc := RegNext(RegNext((accu)))
@@ -72,4 +141,6 @@ abstract class Leros(size: Int, memSize: Int, prog: String, fmaxReg: Boolean) ex
   }
 }
 
-
+object Leros extends App {
+  emitVerilog(new Leros(32, 10, args(0), true), Array("--target-dir", "generated"))
+}

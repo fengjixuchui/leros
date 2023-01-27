@@ -17,43 +17,29 @@ class LerosTest extends AnyFlatSpec with ChiselScalatestTester {
   progs.foreach(p => {
     val program = p + ".s"
 
-    def testFun(dut: Leros): Unit = {
+    def testFun(dut: LerosBase): Unit = {
       var run = true
       var maxCycles = 10000
       while (run) {
-        // Looks like peeking elements is gone in Chisel 3, maybe back in ChiselTest?
-        //    peek(dut.pc)
-        //    peek(dut.accuReg)
-        //    peek(dut.instr)
-        val pc = dut.io.dbg.pc.peek.litValue.toInt
-        val accu = dut.io.dbg.acc.peek.litValue.toInt
-        val instr = dut.io.dbg.instr.peek().litValue.toInt
-        // It is probably NOT a good idea that Predef printf is overloaded in this context
+        val pc = dut.io.dbg.pc.peekInt()
+        val accu = dut.io.dbg.acc.peekInt()
+        val instr = dut.io.dbg.instr.peekInt()
         // Predef.printf("pc: 0x%04x instr: 0x%04x accu: 0x%08x\n", pc, instr, accu)
         dut.clock.step(1)
         maxCycles -= 1
-        // The following line does not what one expects as peek() == 0.U does not the right thing
-        // It is silently false!
-        // run = dut.io.dbg.exit.peek() == 0.U && maxCycles > 0
-        // run = dut.io.dbg.exit.peek().litValue() === 0 && true
-        run = dut.io.dbg.exit.peek().litValue.toInt == 0 && maxCycles > 0
+        run = dut.io.dbg.exit.peekInt() == 0 && maxCycles > 0
         assert(maxCycles > 0, "Running out of cycles")
-        // poke(dut.io.din, maxInstructions)
       }
       val res = dut.io.dbg.acc.expect(0.U, "Accu shall be zero at the end of a test case.\n")
     }
 
     "LerosTwoStates HW " should s"pass $program" in {
-      test(new LerosTwoStates(32, 10, program, false)) { dut =>
+      test(new Leros(32, 10, program, false))
+        .withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
         testFun(dut)
       }
     }
 
-    "LerosFsmd HW " should s"pass $program" in {
-      test(new LerosFsmd(32, 10, program, false)).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
-        testFun(dut)
-      }
-    }
   }
   )
 }

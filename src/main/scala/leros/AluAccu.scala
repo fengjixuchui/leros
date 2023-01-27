@@ -3,11 +3,7 @@ package leros
 import chisel3._
 import chisel3.util._
 
-import leros.Types._
-
-object Types {
-  val nop :: add :: sub :: and :: or :: xor :: ld :: shr :: Nil = Enum(8)
-}
+import leros.shared.Constants._
 
 /**
  * Leros ALU including the accumulator register.
@@ -32,32 +28,33 @@ class AluAccu(size: Int) extends Module {
   val res = WireDefault(a)
 
   switch(op) {
-    is(nop) {
+    is(nop.U) {
       res := a
     }
-    is(add) {
+    is(add.U) {
       res := a + b
     }
-    is(sub) {
+    is(sub.U) {
       res := a - b
     }
-    is(and) {
+    is(and.U) {
       res := a & b
     }
-    is(or) {
+    is(or.U) {
       res := a | b
     }
-    is(xor) {
+    is(xor.U) {
       res := a ^ b
     }
-    is(shr) {
+    is(shr.U) {
       res := a >> 1
     }
-    is(ld) {
+    is(ld.U) {
       res := b
     }
   }
 
+  // TODO: halfword, sign extend
   val byte = WireDefault(res(7, 0))
   when(io.off === 1.U) {
     byte := res(15, 8)
@@ -66,24 +63,20 @@ class AluAccu(size: Int) extends Module {
   }.elsewhen(io.off === 3.U) {
     byte := res(31, 24)
   }
-
-  // TODO: find the conversion in Chisel and document it also in the Chisel book
-  val mask = Wire(Vec(4, Bool()))
-  for (i <- 0 until 4) mask(i) := io.enaMask(i)
+  val signExt = Wire(SInt(32.W))
+  signExt := byte.asSInt
 
   // Workaround for missing subword assignments
-  class Split extends Bundle {
-    val bytes = Vec(4, UInt(8.W))
-  }
-
-  val split = Wire(new Split())
+  val split = Wire(Vec(4, UInt(8.W)))
   for (i <- 0 until 4) {
-    split.bytes(i) := Mux(mask(i), res(8 * i + 7, 8 * i), accuReg(8 * i + 7, 8 * i))
+    split(i) := Mux(io.enaMask(i), res(8 * i + 7, 8 * i), accuReg(8 * i + 7, 8 * i))
   }
 
   when(io.enaByte & io.enaMask.andR) {
     // should be constructed out of the ALU
-    accuReg := 0.U ## byte
+    // According to Morten it should be sign extended
+    accuReg := signExt.asUInt
+    // printf("accu byte %x io.off: %x\n", byte, io.off)
   } .otherwise {
     accuReg := split.asUInt
   }
